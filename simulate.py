@@ -9,6 +9,7 @@ Usage:
     docker exec jupyter python /home/jovyan/project/simulate.py
     docker exec jupyter python /home/jovyan/project/simulate.py --rate 2.0
     docker exec jupyter python /home/jovyan/project/simulate.py --rate 0.5 --tables customers
+    docker exec jupyter python /home/jovyan/project/simulate.py --limit 50
 
 Press Ctrl-C to stop.
 """
@@ -196,6 +197,8 @@ def main():
                         help="Operations per second.")
     parser.add_argument("--tables", default="both", choices=["customers", "drivers", "both"],
                         help="Which tables to mutate.")
+    parser.add_argument("--limit", type=int, default=0,
+                        help="Stop after N operations (0 = no limit).")
     args = parser.parse_args()
 
     interval = 1.0 / args.rate
@@ -205,6 +208,7 @@ def main():
     print("=" * 60)
     print(f"Rate:   {args.rate:.1f} ops/sec")
     print(f"Tables: {args.tables}")
+    print(f"Limit:  {args.limit if args.limit else 'none'}")
     print("Press Ctrl-C to stop.\n")
 
     ops_count = 0
@@ -230,6 +234,10 @@ def main():
                 print(f"[{ops_count:>5} | {elapsed:>6.1f}s] {result}")
             except Exception as e:
                 print(f"[ERROR] {e}")
+
+            if args.limit and ops_count >= args.limit:
+                print(f"\nReached limit of {args.limit} operations.")
+                raise KeyboardInterrupt
 
             time.sleep(interval)
 
