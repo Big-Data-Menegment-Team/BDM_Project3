@@ -39,6 +39,9 @@ CONNECTOR_CONFIG = {
     "snapshot.mode": "initial",
     "key.converter.schemas.enable": "false",
     "value.converter.schemas.enable": "false",
+    # Postgres NUMERIC/DECIMAL would otherwise be emitted as base64-encoded bytes;
+    # `double` makes them arrive as JSON numbers so Spark can cast them directly.
+    "decimal.handling.mode": "double",
 }
 
 

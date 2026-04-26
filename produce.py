@@ -85,6 +85,8 @@ def main() -> None:
                         help="Events per second.")
     parser.add_argument("--loop",      action="store_true",
                         help="Replay the file indefinitely (Ctrl-C to stop).")
+    parser.add_argument("--limit",     type=int, default=0,
+                        help="Stop after sending N events (0 = no limit).")
     args = parser.parse_args()
 
     # Resolve data path relative to this script's directory
@@ -101,6 +103,12 @@ def main() -> None:
     df = pd.read_parquet(data_path)
     print(f"Rows     : {len(df):,}")
     print(f"Columns  : {list(df.columns)}")
+
+    # iterrows() is pathologically slow on multi-million-row dataframes; slice early
+    # if a limit is set so we only iterate the rows we need.
+    if args.limit and not args.loop:
+        df = df.head(args.limit)
+        print(f"Sliced   : {len(df):,} rows (--limit {args.limit})")
 
     interval = 1.0 / args.rate
 
@@ -152,6 +160,10 @@ def main() -> None:
                         f"PU={msg.get('PULocationID')}  DO={msg.get('DOLocationID')}  "
                         f"fare=${msg.get('fare_amount')}"
                     )
+
+                if args.limit and sent >= args.limit:
+                    print(f"\nReached limit of {args.limit} events.")
+                    raise KeyboardInterrupt
 
                 time.sleep(interval)
 

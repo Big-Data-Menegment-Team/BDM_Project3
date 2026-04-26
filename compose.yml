@@ -134,6 +134,7 @@ services:
   airflow:
     image: apache/airflow:2.10.5-python3.11
     container_name: airflow
+    user: "0:0"  # run as root: needed to install docker.io and read the docker socket
     depends_on:
       kafka:
         condition: service_healthy
@@ -161,17 +162,21 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - airflow-data:/opt/airflow
+      # Mount the docker socket so DAG tasks can `docker exec jupyter spark-submit ...`
+      - /var/run/docker.sock:/var/run/docker.sock
     entrypoint: >
       /bin/bash -c "
-      airflow db migrate;
-      airflow users create
+      apt-get update -qq && apt-get install -y -qq --no-install-recommends docker.io > /dev/null;
+      chown -R airflow:0 /opt/airflow;
+      su airflow -c 'airflow db migrate';
+      su airflow -c 'airflow users create
       --username ${AIRFLOW_USER:-admin}
       --password ${AIRFLOW_PASSWORD:-admin}
       --firstname Admin
       --lastname User
       --role Admin
-      --email admin@example.com 2>/dev/null || true;
-      exec airflow standalone
+      --email admin@example.com' 2>/dev/null || true;
+      exec su airflow -c 'airflow standalone'
       "
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
