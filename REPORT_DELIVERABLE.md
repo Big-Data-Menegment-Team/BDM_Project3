@@ -547,9 +547,120 @@ That's the deliberate improvement over Project 2.
 
 ---
 
-## 5. Custom scenario
+## 5. Custom scenario - Customer Geography Report (issue #1)
 
-TODO
+Two new gold tables, both under `lakehouse.cdc`, driven by silver+bronze CDC:
+
+| Table | Pattern | Source |
+|---|---|---|
+| `gold_customer_geography` | full `INSERT OVERWRITE` each run | silver_customers (active), bronze_customers (24h deltas) |
+| `gold_geography_trend` | append-only, one row per `(run_id, country)` | derived from this run + previous trend snapshot |
+
+Implementation: [`jobs/gold_geography.py`](jobs/gold_geography.py).
+Orchestration: a **separate** DAG [`dags/geography_dag.py`](dags/geography_dag.py) - kept independent so it can fail without impacting the main `lakehouse` DAG, and so its scope is small enough to reason about end-to-end.
+
+### 5.1 Where each metric comes from
+
+| Metric | Source | Logic |
+|---|---|---|
+| `active_customers` | `silver_customers` | `GROUP BY country, COUNT(*)` - silver is the current-state mirror, so this is by definition "currently active, not deleted" |
+| `added_24h` | `bronze_customers` | events with `op='c'` and `ts_ms >= now-24h`. We deliberately ignore `op='r'` (initial snapshot reads) - those represent rows that *already existed*, not new arrivals |
+| `deleted_24h` | `bronze_customers` | events with `op='d'` and `ts_ms >= now-24h`. For deletes the country lives in `before_country` (after_country is NULL), so we `COALESCE(after_country, before_country)` |
+| `net_change_24h` | derived | `added_24h - deleted_24h` |
+| `pct_of_total` | derived | `active_customers * 100 / SUM(active_customers)` |
+
+For the trend table, `prev_active` comes from the **previous run's snapshot for the same country**, found via `ROW_NUMBER() OVER (PARTITION BY country ORDER BY snapshot_ts DESC) WHERE rn=1` over the trend table itself, excluding the current run_id. `dropped_20pct` is true when `pct_change <= -20.0`.
+
+We deliberately UNION the countries from the current snapshot with the countries from the previous trend snapshot, so a country that *disappeared* from silver this run still gets a trend row with `active=0` (and is correctly flagged as a drop, possibly all the way to -100%).
+
+### 5.2 Schemas
+
+```sql
+DESCRIBE TABLE lakehouse.cdc.gold_customer_geography;
+-- run_id STRING, snapshot_ts TIMESTAMP, country STRING,
+-- active_customers BIGINT, added_24h BIGINT, deleted_24h BIGINT,
+-- net_change_24h BIGINT, pct_of_total DOUBLE
+
+DESCRIBE TABLE lakehouse.cdc.gold_geography_trend;
+-- run_id STRING, snapshot_ts TIMESTAMP, country STRING,
+-- active_customers BIGINT, prev_active BIGINT, delta BIGINT,
+-- pct_change DOUBLE, dropped_20pct BOOLEAN
+```
+
+### 5.3 Geography table after several DAG runs
+
+```sql
+SELECT country, active_customers, added_24h, deleted_24h, net_change_24h,
+       ROUND(pct_of_total, 1) AS pct
+FROM lakehouse.cdc.gold_customer_geography
+ORDER BY active_customers DESC;
+```
+
+```
++---------+----------------+---------+-----------+--------------+----+
+|country  |active_customers|added_24h|deleted_24h|net_change_24h| pct|
++---------+----------------+---------+-----------+--------------+----+
+|<paste output here after running the geography DAG with simulator active>|
++---------+----------------+---------+-----------+--------------+----+
+```
+
+### 5.4 "Which country has the most customers? Which lost the most in the last hour?"
+
+Most customers (always taken from the latest geography snapshot - geography is fully overwritten each run, so this is by construction the live answer):
+
+```sql
+SELECT country, active_customers
+FROM lakehouse.cdc.gold_customer_geography
+ORDER BY active_customers DESC LIMIT 1;
+```
+
+Lost the most in the last hour (from the trend table - the most negative `delta` among rows whose `snapshot_ts` is within the last hour):
+
+```sql
+SELECT country, prev_active, active_customers, delta,
+       ROUND(pct_change, 1) AS pct_change, dropped_20pct
+FROM lakehouse.cdc.gold_geography_trend
+WHERE snapshot_ts > current_timestamp() - INTERVAL 1 HOUR
+ORDER BY delta ASC
+LIMIT 1;
+```
+
+```
+<paste output here>
+```
+
+### 5.5 Trend table - distribution shifts over time (>=3 snapshots)
+
+Three consecutive runs of the geography DAG with the simulator active in between. The trend table grows by one row per country per run:
+
+```sql
+SELECT run_id, snapshot_ts, country, active_customers, prev_active, delta,
+       ROUND(pct_change, 1) AS pct_change, dropped_20pct
+FROM lakehouse.cdc.gold_geography_trend
+ORDER BY snapshot_ts, country;
+```
+
+```
++-------+-----------+---------+----------------+-----------+-----+----------+-------------+
+|run_id |snapshot_ts|country  |active_customers|prev_active|delta|pct_change|dropped_20pct|
++-------+-----------+---------+----------------+-----------+-----+----------+-------------+
+|<paste output here showing >= 3 snapshots>                                                |
++-------+-----------+---------+----------------+-----------+-----+----------+-------------+
+```
+
+For the very first snapshot per country, `prev_active` is NULL, `pct_change` is NULL, and `dropped_20pct` is FALSE - by design, since we can't measure change without a baseline. With ~9 customers per country in the seed, even a single delete is already a >10% drop, so the -20% threshold is realistic for this dataset.
+
+### 5.6 Idempotency
+
+Same patterns as the rest of the pipeline:
+- `gold_customer_geography`: full `INSERT OVERWRITE` based on silver+bronze. Re-running with the same source state produces the same rows.
+- `gold_geography_trend`: append guarded by `WHERE run_id = ?` count - if the run_id is already present, the append is skipped. So re-running the DAG (`airflow tasks test`, clear+rerun, manual trigger of the same run_id) does not duplicate snapshots.
+
+```
+[geography] gold_customer_geography rebuilt: 9 rows for run_id=manual_test
+[geography] trend already has run_id=manual_test (9 rows), skipping append
+[geography] trend total rows: 9
+```
 
 ---
 
