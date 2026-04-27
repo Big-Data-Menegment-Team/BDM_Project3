@@ -547,7 +547,7 @@ That's the deliberate improvement over Project 2.
 
 ---
 
-## 5. Custom scenario - Customer Geography Report (issue #1)
+## 5. Custom scenario - Customer Geography Report
 
 Two new gold tables, both under `lakehouse.cdc`, driven by silver+bronze CDC:
 
@@ -597,11 +597,21 @@ ORDER BY active_customers DESC;
 ```
 
 ```
-+---------+----------------+---------+-----------+--------------+----+
-|country  |active_customers|added_24h|deleted_24h|net_change_24h| pct|
-+---------+----------------+---------+-----------+--------------+----+
-|<paste output here after running the geography DAG with simulator active>|
-+---------+----------------+---------+-----------+--------------+----+
++-----------+----------------+---------+-----------+--------------+----+
+|country    |active_customers|added_24h|deleted_24h|net_change_24h|pct |
++-----------+----------------+---------+-----------+--------------+----+
+|Germany    |2               |0        |0          |0             |18.2|
+|Lithuania  |2               |1        |0          |1             |18.2|
+|Norway     |1               |0        |0          |0             |9.1 |
+|South Korea|1               |0        |0          |0             |9.1 |
+|Finland    |1               |0        |0          |0             |9.1 |
+|Japan      |1               |0        |0          |0             |9.1 |
+|Spain      |1               |0        |0          |0             |9.1 |
+|France     |1               |1        |0          |1             |9.1 |
+|Canada     |1               |0        |0          |0             |9.1 |
+|           |0               |0        |3          |-3            |0.0 |
+|Italy      |0               |2        |0          |2             |0.0 |
++-----------+----------------+---------+-----------+--------------+----+
 ```
 
 ### 5.4 "Which country has the most customers? Which lost the most in the last hour?"
@@ -612,6 +622,14 @@ Most customers (always taken from the latest geography snapshot - geography is f
 SELECT country, active_customers
 FROM lakehouse.cdc.gold_customer_geography
 ORDER BY active_customers DESC LIMIT 1;
+```
+```
+Most customers:
++-------+----------------+
+|country|active_customers|
++-------+----------------+
+|Germany|               2|
++-------+----------------+
 ```
 
 Lost the most in the last hour (from the trend table - the most negative `delta` among rows whose `snapshot_ts` is within the last hour):
@@ -626,7 +644,12 @@ LIMIT 1;
 ```
 
 ```
-<paste output here>
+Lost the most in the last hour:
++-------+-----------+----------------+-----+----------+-------------+
+|country|prev_active|active_customers|delta|pct_change|dropped_20pct|
++-------+-----------+----------------+-----+----------+-------------+
+|  Italy|          1|               0|   -1|    -100.0|         true|
++-------+-----------+----------------+-----+----------+-------------+
 ```
 
 ### 5.5 Trend table - distribution shifts over time (>=3 snapshots)
@@ -641,25 +664,56 @@ ORDER BY snapshot_ts, country;
 ```
 
 ```
-+-------+-----------+---------+----------------+-----------+-----+----------+-------------+
-|run_id |snapshot_ts|country  |active_customers|prev_active|delta|pct_change|dropped_20pct|
-+-------+-----------+---------+----------------+-----------+-----+----------+-------------+
-|<paste output here showing >= 3 snapshots>                                                |
-+-------+-----------+---------+----------------+-----------+-----+----------+-------------+
++------+--------------------------+-----------+----------------+-----------+-----+----------+-------------+
+|run_id|snapshot_ts               |country    |active_customers|prev_active|delta|pct_change|dropped_20pct|
++------+--------------------------+-----------+----------------+-----------+-----+----------+-------------+
+|snap_1|2026-04-27 18:39:11.402717|           |0               |NULL       |0    |NULL      |false        |
+|snap_1|2026-04-27 18:39:11.402717|Canada     |1               |NULL       |1    |NULL      |false        |
+|snap_1|2026-04-27 18:39:11.402717|Finland    |1               |NULL       |1    |NULL      |false        |
+|snap_1|2026-04-27 18:39:11.402717|France     |1               |NULL       |1    |NULL      |false        |
+|snap_1|2026-04-27 18:39:11.402717|Germany    |2               |NULL       |2    |NULL      |false        |
+|snap_1|2026-04-27 18:39:11.402717|Italy      |0               |NULL       |0    |NULL      |false        |
+|snap_1|2026-04-27 18:39:11.402717|Japan      |1               |NULL       |1    |NULL      |false        |
+|snap_1|2026-04-27 18:39:11.402717|Lithuania  |2               |NULL       |2    |NULL      |false        |
+|snap_1|2026-04-27 18:39:11.402717|Norway     |1               |NULL       |1    |NULL      |false        |
+|snap_1|2026-04-27 18:39:11.402717|South Korea|1               |NULL       |1    |NULL      |false        |
+|snap_1|2026-04-27 18:39:11.402717|Spain      |1               |NULL       |1    |NULL      |false        |
+|snap_2|2026-04-27 18:39:45.934033|           |0               |0          |0    |NULL      |false        |
+|snap_2|2026-04-27 18:39:45.934033|Canada     |1               |1          |0    |0.0       |false        |
+|snap_2|2026-04-27 18:39:45.934033|Finland    |1               |1          |0    |0.0       |false        |
+|snap_2|2026-04-27 18:39:45.934033|France     |1               |1          |0    |0.0       |false        |
+|snap_2|2026-04-27 18:39:45.934033|Germany    |2               |2          |0    |0.0       |false        |
+|snap_2|2026-04-27 18:39:45.934033|Italy      |1               |0          |1    |NULL      |false        |
+|snap_2|2026-04-27 18:39:45.934033|Japan      |1               |1          |0    |0.0       |false        |
+|snap_2|2026-04-27 18:39:45.934033|Lithuania  |2               |2          |0    |0.0       |false        |
+|snap_2|2026-04-27 18:39:45.934033|Norway     |1               |1          |0    |0.0       |false        |
+|snap_2|2026-04-27 18:39:45.934033|South Korea|1               |1          |0    |0.0       |false        |
+|snap_2|2026-04-27 18:39:45.934033|Spain      |1               |1          |0    |0.0       |false        |
+|snap_3|2026-04-27 18:39:59.837274|           |0               |0          |0    |NULL      |false        |
+|snap_3|2026-04-27 18:39:59.837274|Canada     |1               |1          |0    |0.0       |false        |
+|snap_3|2026-04-27 18:39:59.837274|Finland    |1               |1          |0    |0.0       |false        |
+|snap_3|2026-04-27 18:39:59.837274|France     |1               |1          |0    |0.0       |false        |
+|snap_3|2026-04-27 18:39:59.837274|Germany    |2               |2          |0    |0.0       |false        |
+|snap_3|2026-04-27 18:39:59.837274|Italy      |0               |1          |-1   |-100.0    |true         |
+|snap_3|2026-04-27 18:39:59.837274|Japan      |1               |1          |0    |0.0       |false        |
+|snap_3|2026-04-27 18:39:59.837274|Lithuania  |2               |2          |0    |0.0       |false        |
+|snap_3|2026-04-27 18:39:59.837274|Norway     |1               |1          |0    |0.0       |false        |
+|snap_3|2026-04-27 18:39:59.837274|South Korea|1               |1          |0    |0.0       |false        |
+|snap_3|2026-04-27 18:39:59.837274|Spain      |1               |1          |0    |0.0       |false        |
++------+--------------------------+-----------+----------------+-----------+-----+----------+-------------+
 ```
-
-For the very first snapshot per country, `prev_active` is NULL, `pct_change` is NULL, and `dropped_20pct` is FALSE - by design, since we can't measure change without a baseline. With ~9 customers per country in the seed, even a single delete is already a >10% drop, so the -20% threshold is realistic for this dataset.
 
 ### 5.6 Idempotency
 
 Same patterns as the rest of the pipeline:
 - `gold_customer_geography`: full `INSERT OVERWRITE` based on silver+bronze. Re-running with the same source state produces the same rows.
-- `gold_geography_trend`: append guarded by `WHERE run_id = ?` count - if the run_id is already present, the append is skipped. So re-running the DAG (`airflow tasks test`, clear+rerun, manual trigger of the same run_id) does not duplicate snapshots.
+- `gold_geography_trend`: append guarded by `WHERE run_id = ?` count - if the run_id is already present, the append is skipped. So re-running the DAG does not duplicate snapshots.
 
 ```
-[geography] gold_customer_geography rebuilt: 9 rows for run_id=manual_test
-[geography] trend already has run_id=manual_test (9 rows), skipping append
-[geography] trend total rows: 9
+[geography] gold_customer_geography rebuilt: 11 rows for run_id=snap_3
+[geography] trend already has run_id=snap_3 (11 rows), skipping append
+[geography] trend total rows: 33
+trend rows before=33  after=33  unchanged=True
 ```
 
 ---
